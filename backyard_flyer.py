@@ -36,9 +36,9 @@ class BackyardFlyer(Drone):
         self.flight_state = States.MANUAL
 
         # TODO: Register all your callbacks here
-        self.register_callback(MsgID.LOCAL_POSITION, self.transition)
-        self.register_callback(MsgID.LOCAL_VELOCITY, self.transition)
-        self.register_callback(MsgID.STATE, self.transition)
+        self.register_callback(MsgID.LOCAL_POSITION, self.local_position_callback)
+        self.register_callback(MsgID.LOCAL_VELOCITY, self.velocity_callback)
+        self.register_callback(MsgID.STATE, self.state_callback)
 
     def local_position_callback(self):
         """
@@ -46,11 +46,23 @@ class BackyardFlyer(Drone):
 
         This triggers when `MsgID.LOCAL_POSITION` is received and self.local_position contains new data
         """
-        # NOTE: To have a better overview of "Phase" transitions and checks, I implemented positional checks in 
-        # `transition()`.
-        # If we want to improve performance, position dependent transitions can be triggered here instead,
-        # but I don't think it's necessary to complicate the code now by adding a proper state machine.
-        pass
+        if not self.in_mission:
+            return
+
+        if self.flight_state == States.TAKEOFF:
+            altitude = -self.local_position[2]
+            target_altitude = self.target_position[2]
+            if altitude / target_altitude >= 0.95:
+                self.waypoint_transition()
+        elif self.flight_state == States.WAYPOINT:
+            destination = self.all_waypoints[0]
+            close_to_destination = self.close_to(destination)
+            if close_to_destination:
+                if len(self.all_waypoints) == 1:
+                    self.landing_transition()
+                else:
+                    self.all_waypoints.pop(0)
+                    self.fly_to_position(self.all_waypoints[0])
 
     def velocity_callback(self):
         """
@@ -58,11 +70,16 @@ class BackyardFlyer(Drone):
 
         This triggers when `MsgID.LOCAL_VELOCITY` is received and self.local_velocity contains new data
         """
-        # NOTE: To have a better overview of "Phase" transitions and checks, I implemented velocity checks in 
-        # `transition()`.
-        # If we want to improve performance, velocity dependent transitions can be triggered here instead,
-        # but I don't think it's necessary to complicate the code now by adding a proper state machine.
-        pass
+        if not self.in_mission:
+            return
+        
+        if self.flight_state == States.LANDING:
+            # If we want to land on a specific spot (less than 0.3 accuracy), we need to correct for drift
+
+            # Don't fly the drone into the ground, please!
+            close_to_destination = -self.local_position[2] < 0.3
+            if close_to_destination:
+                self.disarming_transition()
 
     def state_callback(self):
         """
@@ -73,11 +90,17 @@ class BackyardFlyer(Drone):
         # NOTE: This is triggered perioadically, even if `self.armed` or `self.guided` didn't change.
         # print('self.armed', self.armed)
         # print('self.guided', self.guided)
-
-        # NOTE: To have a better overview of "Phase" transitions and checks, I implemented state checks in 
-        # `transition()`.
-        # If we want to improve performance, state dependent transitions can be triggered here instead,
-        # but I don't think it's necessary to complicate the code now by adding a proper state machine.
+        if not self.in_mission:
+            return
+        
+        if self.flight_state == States.MANUAL:
+            self.arming_transition()
+        elif self.flight_state == States.ARMING:
+            if self.armed:
+                self.takeoff_transition()
+        elif self.flight_state == States.DISARMING:
+            if not self.armed and not self.guided:
+                self.manual_transition()
 
     def calculate_box(self):
         """TODO: Fill out this method
@@ -111,42 +134,6 @@ class BackyardFlyer(Drone):
         """
         print('Flying to', position)
         self.cmd_position(position[0], position[1], position[2], 0.0)
-
-    def transition(self):
-        """Transition through different states with appropriate checks.
-        """
-        if not self.in_mission:
-            return
-
-        if self.flight_state == States.MANUAL:
-            self.arming_transition()
-        elif self.flight_state == States.ARMING:
-            if self.armed:
-                self.takeoff_transition()
-        elif self.flight_state == States.TAKEOFF:
-            altitude = -self.local_position[2]
-            target_altitude = self.target_position[2]
-            if altitude / target_altitude >= 0.95:
-                self.waypoint_transition()
-        elif self.flight_state == States.WAYPOINT:
-            destination = self.all_waypoints[0]
-            close_to_destination = self.close_to(destination)
-            if close_to_destination:
-                if len(self.all_waypoints) == 1:
-                    self.landing_transition()
-                else:
-                    self.all_waypoints.pop(0)
-                    self.fly_to_position(self.all_waypoints[0])
-        elif self.flight_state == States.LANDING:
-            # If we want to land on a specific spot (less than 0.3 accuracy), we need to correct for drift
-
-            # Don't fly the drone into the ground, please!
-            close_to_destination = -self.local_position[2] < 0.3
-            if close_to_destination:
-                self.disarming_transition()
-        elif self.flight_state == States.DISARMING:
-            if not self.armed and not self.guided:
-                self.manual_transition()
 
     def arming_transition(self):
         """TODO: Fill out this method
