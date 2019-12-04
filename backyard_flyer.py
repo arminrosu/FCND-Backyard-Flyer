@@ -127,7 +127,8 @@ class BackyardFlyer(Drone):
             # to a positive value (what?!)
             -self.local_position[2]
         ]
-        return np.allclose(target_position, current_position, atol=0.1, rtol=0.05)
+        distance = np.linalg.norm(np.subtract(current_position, target_position))
+        return distance < 1
 
     def fly_to_position(self, position):
         """Command the drone to fly to a given position
